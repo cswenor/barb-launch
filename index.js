@@ -1,4 +1,6 @@
 const algosdk = require('algosdk');
+const fs = require('fs');
+
 
 // Base URL for the NFD API
 const baseURL = "https://api.nf.domains/nfd/";
@@ -11,7 +13,12 @@ const indexerClient = new algosdk.Indexer(indexerToken, indexerServer, indexerPo
 const asaID = "1285225688"; // Your ASA ID for Barb
 const senderAddress = "RPC35543V7YH6WTWYWBKIYITLYG2DT3BZD6WEZFR4TXZY3EGA6CKRZKZN4";
 
-const blacklistedAddress = "RPC35543V7YH6WTWYWBKIYITLYG2DT3BZD6WEZFR4TXZY3EGA6CKRZKZN4";
+const blacklistedAddresses = [
+  "RPC35543V7YH6WTWYWBKIYITLYG2DT3BZD6WEZFR4TXZY3EGA6CKRZKZN4",
+  "MLFVS7JYC5S7TEWUWDY5HHJTCS3EHWV6KZKOM43Q2RSCX6VZH7DEBJXZYQ",
+  "3Q2VUSSZ7WSAYEHZYZAPHMCKZLNVXC2YRR62K5YA327UOJ3MZJOIAKOLLQ"
+];
+
 
 
 // Function to fetch segments
@@ -46,10 +53,12 @@ async function fetchSegments(appID) {
   return allSegments;
 }
 
-function removeBlacklistedAddress(ownerDetails) {
-  if (ownerDetails[blacklistedAddress]) {
-    delete ownerDetails[blacklistedAddress];
-  }
+function removeBlacklistedAddresses(ownerDetails) {
+  blacklistedAddresses.forEach(address => {
+      if (ownerDetails[address]) {
+          delete ownerDetails[address];
+      }
+  });
   return ownerDetails;
 }
 
@@ -57,14 +66,14 @@ function removeBlacklistedAddress(ownerDetails) {
 function countOwners(segments) {
   const ownerCounts = {};
   segments.forEach(segment => {
-    const owner = segment.owner;
-    if (owner && owner !== blacklistedAddress) {
-      if (!ownerCounts[owner]) {
-        ownerCounts[owner] = 1;
-      } else {
-        ownerCounts[owner] += 1;
+      const owner = segment.owner;
+      if (owner && !blacklistedAddresses.includes(owner)) {
+          if (!ownerCounts[owner]) {
+              ownerCounts[owner] = 1;
+          } else {
+              ownerCounts[owner] += 1;
+          }
       }
-    }
   });
   return ownerCounts;
 }
@@ -122,7 +131,7 @@ async function calculateReceivedBarb(ownerDetails) {
 function calculateTotalSupposedBarb(ownerDetails) {
   let totalSupposedBarb = 0;
   for (const owner in ownerDetails) {
-    if (owner !== blacklistedAddress && ownerDetails.hasOwnProperty(owner)) {
+    if (!blacklistedAddresses.includes(owner) && ownerDetails.hasOwnProperty(owner)) {
       totalSupposedBarb += ownerDetails[owner].totalBarb;
     }
   }
@@ -132,7 +141,7 @@ function calculateTotalSupposedBarb(ownerDetails) {
 function calculateTotalReceivedBarb(ownerDetails) {
   let totalReceivedBarb = 0;
   for (const owner in ownerDetails) {
-    if (owner !== blacklistedAddress && ownerDetails.hasOwnProperty(owner)) {
+    if (!blacklistedAddresses.includes(owner) && ownerDetails.hasOwnProperty(owner)) {
       totalReceivedBarb += ownerDetails[owner].receivedBarb || 0;
     }
   }
@@ -198,6 +207,31 @@ async function findNonNFDTransactions(ownerDetails) {
   return nonNFDTransactions;
 }
 
+function convertToCSV(ownerDetails) {
+  // Define the CSV columns and header
+  const headers = ["Owner Address", "Count", "Total Supposed Barb", "Received Barb", "Delta Barb"];
+  const rows = [headers.join(',')]; // Start with headers
+
+  // Loop through the owner details to create the CSV rows
+  for (const owner in ownerDetails) {
+      if (ownerDetails.hasOwnProperty(owner)) {
+          const detail = ownerDetails[owner];
+          const row = [
+              owner, // Owner Address
+              detail.count || 0, // Count
+              detail.totalBarb || 0, // Total Supposed Barb
+              detail.receivedBarb || 0, // Received Barb
+              detail.deltaBarb || 0 // Delta Barb
+          ];
+          rows.push(row.join(',')); // Join each row's values with commas and push
+      }
+  }
+
+  // Join all rows with newline characters to create the full CSV string
+  return rows.join('\n');
+}
+
+
 async function main() {
   try {
     // Step 1: Fetch the segments
@@ -206,7 +240,7 @@ async function main() {
     // Step 2: Combine duplicates and add counts
     const ownerCounts = countOwners(segments);
 
-    const cleanedOwnerDetails = removeBlacklistedAddress(ownerCounts);
+    const cleanedOwnerDetails = removeBlacklistedAddresses(ownerCounts);
 
     // Step 3: Calculate the total Barb for each owner
     const totalBarb = calculateTotalBarb(cleanedOwnerDetails);
@@ -235,8 +269,24 @@ async function main() {
     console.log("Total Barb actually given out:", totalReceivedBarb);
     console.log("Total sum of all deltas:", totalDeltaSum);
 
-    const nonNFDTransactions = await findNonNFDTransactions(cleanedOwnerDetails);
-    console.log("Transactions not to NFDs:", nonNFDTransactions);
+    // const nonNFDTransactions = await findNonNFDTransactions(cleanedOwnerDetails);
+    // console.log("Transactions not to NFDs:", nonNFDTransactions);
+
+    const csvData = convertToCSV(finalDetails);
+
+    // Define the path and name of the file
+    const filePath = 'barb_distribution_analysis.csv';
+
+    // Write the CSV data to a file
+    fs.writeFile(filePath, csvData, (err) => {
+        if (err) {
+            console.error('An error occurred while writing the CSV file:', err);
+        } else {
+            console.log(`CSV file was saved as ${filePath}`);
+        }
+    });
+
+
   } catch (error) {
     console.error("An error occurred:", error);
   }
